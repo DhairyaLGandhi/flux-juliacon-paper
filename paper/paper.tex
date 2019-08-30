@@ -1,0 +1,317 @@
+
+% JuliaCon proceedings template
+\documentclass{juliacon}
+\setcounter{page}{1}
+
+\usepackage[font=small,labelfont=bf]{caption}
+
+\setlength{\parindent}{2em}
+\setlength{\parskip}{1em}
+
+% Change link color
+\hypersetup{colorlinks=true}
+
+\begin{document}
+
+\input{header}
+
+\maketitle
+
+\begin{abstract}
+
+Machine learning as a discipline has seen an incredible surge of interest in recent years due in large part to a perfect storm of new theory, superior tooling, renewed interest in its capabilities.  We present in this paper a framework named \texttt{Flux} that shows how further refinement of the core ideas of machine learning, built upon the foundation of the Julia programming language, can yield an environment that is simple, easily modifiable, and performant.  We detail the fundamental principles of \texttt{Flux} as a framework for differentiable programming, give examples of models that are implemented within \texttt{Flux} to display many of the language and framework-level features that contribute to its ease of use and high productivity, display internal compiler techniques used to enable the acceleration and performance that lies at the heart of \texttt{Flux}, and finally give an overview of the larger ecosystem that \texttt{Flux} fits inside of.
+
+\headingtable
+\end{abstract}
+
+\section{Introduction}
+
+\texttt{Flux} is a new machine learning (ML) stack. Only a year old and developed by a very small team, it nonetheless has inspired an enthusiastic and rapidly growing community of researchers and industry users implementing novel kinds of models and acceleration techniques.
+
+ML engineering is fundamentally a programming languages problem; machine learning models are growing ever more complex, incorporating control flow, state and data structures, and borrowing techniques from research areas throughout the field of computer science from software engineering to scientific simulation to statistical inference.  These models are best viewed as \textit{differentiable algorithms}; and to express algorithms we use programming languages \cite{innes2018machine}.
+
+\texttt{Flux} takes Julia \cite{bezanson2017julia} to be this language. Julia is recent but, being designed from the ground up for mathematical and numerical computing, unusually well-suited for expressing ML programs.  Its mix of modern design and novel techniques in the compiler---which we have significantly extended to further suit differentiable algorithms and accelerators---makes it easier to address the high performance requirements needed for applying machine learning to large models and data sets.
+
+There are three pillars that set \texttt{Flux} apart among ML systems: simplicity, hackability, and underlying compiler technology.
+
+
+\subsection{Simplicity}
+%
+
+The word ``simple" is typically not thrown around in the ML systems world. However, simplifying solutions is a crucial part of approaching more complex problems. Where typical ML frameworks are written in many hundreds of thousands of lines of C++ \cite{abadi2016tensorflow}, \texttt{Flux} is only a thousand lines of straightforward Julia code.
+
+Several factors compound to enable this. First, the ability to write everything from layer definitions, to algorithmic differentiation, to CUDA kernels, in high-level and \textit{fast} Julia code enables high developer productivity; code can typically be written once and forgotten about rather than being written, rewritten and optimized in C over years. Fast high-level code also enables something much more powerful than convenience: abstraction. This means infrastructure like higher-order kernels for \texttt{map(f,xs)} and \texttt{broadcast}, which can be written once and generalize to any user-defined \texttt{f} or input type with no extra effort or undue performance overhead.  These high-level features in other languages and frameworks are often available, but typically incur performance penalties such that all ``real work'' must be done in the lower-level language components of the ML systems.
+
+This extends to integration with other tools in the ecosystem.  Writing an image pipeline really means loading the \texttt{Flux} and \texttt{Images} \cite{Images.jl} packages, and using them as normal. In fact, even GPU support is handled this way; rather than being provided as part of \texttt{Flux}, one loads a generic GPU arrays package such as \texttt{CuArrays} \cite{CuArrays.jl}, and passing those arrays into a \texttt{Flux} model just works; transferring data and computational kernels off to the GPU accelerator then bringing the results back to the CPU without any special handling within \texttt{Flux} itself. This leverages Julia's heavy use of specialization, which effectively generates custom code for the GPU, and even for custom floating-point types that would otherwise need to be written by hand.  Far from becoming an all-encompassing monolith, \texttt{Flux} remains a lean ``glue'' package, bringing together a set of underlying abstractions (e.g. gradients and GPU support) and combining them to create an ML framework.
+
+\subsection{Hackability}
+\label{Hacka}
+
+A core tenet of \texttt{Flux}, and Julia more generally, is that library code is just user code that happens to have been loaded from an external file. Unlike previous ML frameworks (including those written in Julia), \texttt{Flux} does not pick a certain level of abstraction (such as mathematical graphs or layer stacking) that all models must use. Instead, careful design of the underlying automatic differentiation (Section \ref{zygote}) allows freely mixing mathematical expressions, built-in and custom layers and algorithms with control flow in one model. This makes \texttt{Flux} unusually easy to extend to new problems.
+
+\texttt{Flux} users regularly inject custom CUDA kernels, write down new mathematical functions and layers, hook in custom gradient definitions and even custom parallel training algorithms, all with the same performance as built-in features.  Hooking in custom functionality is often a one-line change that happens in the same Julia script as model code.  Because there is no difference between \texttt{Flux} code and other general Julia code, it is possible to break out of the typical deep learning paradigm and experiment with new concepts such as interleaving gradient descent training with MCMC.  Just write down your own training loop; the obvious mathematical code will work, and be fast.
+
+This extends to integrating other packages with \texttt{Flux} models, such as Julia's state-of-the-art tools for mathematical optimization \cite{dunning2017jump}, differential equations \cite{rackauckas2017differentialequations} and probabilistic programming \cite{turing18}. This goes deeper than just using neural nets alongside these other techniques, as one can even incorporate them directly into models. For example, Julia's differential equation solvers while not explicitly adapted either for AD or GPUs can seamlessly be used with both. This means that one can use a physical simulation to enhance the predictions of the model, then backpropagate through the entire model \textit{including} the simulation to get gradients.  Bringing tools like physics simulators into models is where deep learning truly becomes differentiable programming.
+
+\subsection{Compiler Technology}
+\label{Compiler}
+
+\texttt{Flux} is committed to providing a dynamic (or ``define-by-run'') interface, and takes a hard line against any kind of graph building or performance annotations \cite{PyTorch1}. We support all of Julia's language features, from control flow and data structures to macros. Users can code interactively in Jupyter notebooks and combine high-performance numerics with convenient plotting and visualization. But we also want to get the benefits traditionally held by ``static graph" frameworks - zero-overhead source-to-source AD, operator fusion, multi-GPU/distributed training, and single-executable deployment.
+
+Doing this effectively requires extracting and analyzing ``static graphs'' directly from written Julia syntax, a common task within the field of programming language theory. Most ML systems problems are, in fact, standard and well-studied compiler problems, viewed through the right lens. Using a compiled language is enough to solve many issues, and extending that compiler is the best way to solve many more.
+
+Several illustrative examples, covering differentiation (Section \ref{zygote}), GPU and TPU compilation (Sections \ref{gpu} and \ref{tpu}) and SPMD / batching (Section \ref{spmd}) are covered briefly in this paper.
+
+\section{Fashionable Modelling}
+
+The inherent design of \texttt{Flux}, built on top of the technical foundation of Julia's multiple dispatch semantics, unlocks the ability for \texttt{Flux} to act as an extremely flexible ``glue'' that can bring together disparate packages into a single, differentiable and high-performance program.  Multiple dispatch allows the programmer to write a function definition in terms of ``verbs'', (e.g. \textit{sum}, \textit{relu}, \textit{multiplication}) without needing to create a different version for each separate type of the data being operated upon.  An example of what such a function looks like is given in listing \ref{lst:leakyrelu}, where the definition of the \texttt{leakyrelu()} activation function is given.
+
+\begin{lstlisting}[language = Julia,
+                  label={lst:leakyrelu},
+                  caption={\texttt{leakyrelu()} activation function definition},
+                  captionpos=b]
+function leakyrelu(x, a=oftype(x/1, 0.01))
+    return max(a*x, x/1)
+end
+\end{lstlisting}
+This code listing demonstrates the three tenets of the \texttt{Flux} paradigm: Its simplicity is evident, and the structure of the code follows very closely to the mathematical definition of Leaky ReLU as given in the original paper \cite{maas_leakyrelu_2013}.  It is hackable, in that these lines of code in a \texttt{Flux} program are all that is needed to add a new activation function to the machine learning library, setting an extremely low barrier to entry for definitions of new layers, activation functions, etc...  Finally, in a nod toward the realities of high performance computing, Julia (and by extension, \texttt{Flux}) makes it easy to provide to the compiler the kind of information necessary to generate high-performance code.  In this case, the \texttt{leakyrelu()} function ensures that the default \texttt{a} parameter is of the same type as whatever type would result from division involving the \texttt{x} parameter.  This allows for intelligent (and type-stable) code to be generated for double-precision arrays on the CPU, GPU arrays with reduced precision, or even TPU arrays with further reduced precision, all from a single, readable, function definition.
+
+Comparing the definition given in listing \ref{lst:leakyrelu} with the equivalent definition in a graph-construction based framework without the benefit of Julia's type system emphasizes the ease with which new definitions and new fundamental operations can be added.  Listing \ref{lst:leakyrelutf} shows the equivalent operation performed within TensorFlow \cite{abadi2016tensorflow}.  The fundamental operations being used within the Python \texttt{leakyrelu()} function are defined within TensorFlow and are independent of the typical mathematical functions one would use in a normal Python program.  This disconnect causes a severe lack of composability; one cannot mix and match functionality from different parts of the language ecosystem because all fundamental operations are built upon the foundations of the TensorFlow runtime.
+
+\begin{lstlisting}[language = Python,
+                  label={lst:leakyrelutf},
+                  caption={\texttt{leakyrelu()} activation function definition},
+                  captionpos=b]
+def leakyrelu(x, a=0.2, name=None):
+  x = ops.convert_to_tensor(x)
+  if x.dtype.is_integer:
+    x = math_ops.to_float(x)
+  a = ops.convert_to_tensor(a, dtype=x.dtype)
+  return math_ops.maximum(a * x, x)
+\end{lstlisting}
+
+In the following sub-sections we will demonstrate how the three pillars of \texttt{Flux} (\textit{Simplicity}, \textit{Hackability} and \textit{Compiler Technology}) combine to create an attractive and productive environment for machine learning researchers to build effective, performant models across a variety of applications.  We do so by picking a few well-known models from the machine learning community and displaying salient portions of their implementations in \texttt{Flux}.
+
+\subsection{Resnet}
+
+\begin{lstlisting}[language = Julia,
+                  label={lst:resnet_block},
+                  caption={A resnet block in \texttt{Flux}},
+                  captionpos=b,
+                  numbers=left,]
+struct ResidualBlock
+    conv::Tuple
+    norm::Tuple
+    shortcut
+end
+@treelike ResidualBlock
+
+function (B::ResidualBlock)(input)
+    x = B.norm[1](B.conv[1](input))
+    for i in 2:length(B.conv)
+        x = B.norm[i](B.conv[i](relu.(x)))
+    end
+    return relu.(x + B.shortcut(input))
+end
+\end{lstlisting}
+
+Resnet \cite{resnet}, a very popular computer vision model making extensive use of ``residual connections'' to combat the vanishing-gradients problem, yields a succinct example of many of the advantages that \texttt{Flux} maintains over competing deep learning frameworks.  Listing \ref{lst:resnet_block}, shows first a definition of a data type called \texttt{ResidualBlock} that contains three members, two of which are constrained to be of a certain type but the last of which is not.  By explicitly constraining types, the general Julia compiler can generate optimally packed memory representations, however we can also leave fields unspecified, giving us the ability to insert arbitrary user-defined types.  This is used within the \texttt{ResidualBlock} example to allow for the \texttt{shortcut} (which represents the residual connection within a single convolutional block) to be the identity function, a convolutional function, or any other function of the right shape.
+
+This underscores the hackability and simplicity of defining models in \texttt{Flux}.  The only explicit constraints we are putting upon this residual block is that the \texttt{conv} and \texttt{norm} fields are \texttt{Tuple}s (e.g. they are collections of other objects), and the only implicit constraints we are imposing are that the elements of those \texttt{Tuple} fields and the \texttt{shortcut} field are callable.  In Julia, objects are made callable by defining a function with the object's type as its name which we demonstrate on line 8 of the listing.  This further shows how simple it is to use the basic building blocks of Julia within \texttt{Flux}, sacrificing neither expressiveness nor speed while still attaining clarity in the implementation.
+
+\subsection{Discriminative Adversarial Networks}
+
+Nonstandard gradient control is a growing need in the machine learning community as model architectures are stretched to complete more and more complex tasks.  A significant recent development has been the emergence of adversarial networks \cite{GANs}, where two networks are arranged in opposition to each other, one attempting to learn a task and the other inventing new inputs that the first can learn from.  Extensions of this idea include work done in \cite{Saba2018} using \texttt{Flux}, where adversarial networks were used to decrease bias induced by dataset imbalance.
+
+The fundamental problem was strong correlation between classification label (in this case, \textit{tuberculosis} versus \textit{non-tuberculosis} coughs) and originating dataset (in this case, \textit{clinical} versus \textit{non-clinical}).  The machine learning model naturally learned to key off of the differences in dataset, rather than the differences in the cough sounds themselves, because the differences between clinical and non-clinical recordings were larger than the differences between tuberculosis and non-tuberculosis coughs within a single dataset.  Due to the fact that the overwhelming majority of non-tuberculosis coughs were from the non-clinical dataset, the classification algorithm was trapped in a local minimum simply predicting ``tuberculosis'' for every sample from the clinical dataset.
+
+In order to solve this, a Discriminative Adversarial Network (DAN) was employed, building a second network explicitly designed to determine dataset provenance.  This network is then used to ``penalize'' a shared set of weights (the convolutional block shown in red in Figure \ref{fig:dirty_dan}) for extracting information that can be used to determine which dataset a sample originated from.
+
+\begin{lstlisting}[language = Julia,
+                  label={lst:dirty_dan_training_loop},
+                  caption={DAN training loop},
+                  captionpos=b]
+for x, y_c, y_d in training_set
+    y_c_hat, y_d_hat = model(x)
+
+    c_loss = loss(y_c_hat, y) +
+             lambda*loss(y_d_hat, 1 - y_d)
+    d_loss = loss(y_d_hat, y_d)
+    
+    back!(c_loss)
+    back!(d_loss)
+    
+    opt()
+end
+\end{lstlisting}
+
+The code necessary to perform this nonstandard optimization task is surprisingly simple; shown in listing \ref{lst:dirty_dan_training_loop}, it simple calculates a forward pass through the model, returning the outputs from the two branches of the model as \texttt{y\_hat} and \texttt{y\_dan\_hat}, calculates the classifier loss (\texttt{c\_loss}) and the DAN loss (\texttt{d\_loss}), backpropagates the losses onto the network, then takes an optimizer step (\texttt{opt()}).  As can be seen, the optimization framework of \texttt{Flux} follows very naturally from the basic mathematical principles of optimization and provides for very flexible training and evaluation paradigms.
+
+\begin{figure*}[ht]
+  \centering
+  \includegraphics[width=.95\linewidth]{figures/DANArch_red.eps}
+  \caption{Cough classification architecture with DAN and classifier architectures visualized.  Along the bottom lies the convolutional classification network that classifies cough type, with the outputs from the first layer feeding into a multilayer perceptron that classifies dataset source.}
+  \label{fig:dirty_dan}
+\end{figure*}
+
+\subsection{Alpha Go}
+
+An implementation of Google DeepMind's AlphaGo Zero \cite{AlphaGoZero} was recently built in \texttt{Flux} \cite{AlphaGo.jl}. We give in listing \ref{lst:alpha_go_zero} the model construction as a demonstration of what a larger-scale model looks like within \texttt{Flux}.
+
+The code in listing \ref{lst:alpha_go_zero} demonstrates many convenient features of both Julia and \texttt{Flux}. \texttt{Chain()} provides a sequential model container, passing the output of one layer as the input to the next, and doing the reverse with gradients.
+
+\begin{lstlisting}[language = Julia,
+                  label={lst:alpha_go_zero},
+                  caption={AlphaGo Zero model in \texttt{Flux}, parameterized by the values of \texttt{tower\_height}, \texttt{planes}, \texttt{N} and \texttt{action\_space}},
+                  captionpos=b]
+tower = [ResidualBlock(
+    [256,256,256],
+    [3,3],
+    [1,1],
+    [1,1],
+) for i in 1:tower_height]
+
+base_net = Chain(
+    Conv((3,3), 2*planes+1 => 256, pad=1),
+    BatchNorm(256, relu; momentum = 0.95),
+    tower...,
+) |> gpu
+
+value = Chain(
+    Conv((1,1), 256 => 1),
+    BatchNorm(1, relu; momentum = 0.95),
+    x -> reshape(x, :, size(x, 4)),
+    Dense(N*N, 256, relu),
+    Dense(256, 1, tanh),
+) |> gpu
+    
+policy = Chain(
+    Conv((1,1), 256 => 2),
+    BatchNorm(1, relu; momentum = 0.95),
+    x -> reshape(x, :, size(x, 4)),
+    Dense(2*N*N, action_space),
+    x -> softmax(x),
+) |> gpu
+\end{lstlisting}
+
+The \texttt{tower...} syntax denotes ``splatting'' the \texttt{tower} object into the \texttt{Chain} function call, unpacking the array of \texttt{ResidualBlock} objects as separate arguments into the \texttt{Chain} call.  The \texttt{|> gpu} syntax denotes the pipe operator, passing the output of one expression as the input to the next, in this case wrapping the entire expression in a call to \texttt{gpu()} which transparently converts the expression to use GPU datatypes and to compile GPU code when run.  The \texttt{x -> reshape(x, :, size(x, 4))} syntax shows the creation of an anonymous function that dynamically reshapes its inputs to be 2-dimensional, keeping the last axis (which represents batches) but flattening all other axes together.
+
+These listings show, through a combination of Julia language features and intuitive \texttt{Flux} abstractions, a remarkably simple yet powerful language for defining models and building differentiable programs.
+
+\section{Extending Julia's Compiler}
+
+\subsection{Compiling Julia for GPUs}
+\label{gpu}
+
+Julia supports the basic CUDA programming model for writing GPU kernels \cite{besard2017effective}. A simple vector addition kernel looks similar to the CUDA C equivalent.
+
+\begin{lstlisting}[language = Julia,
+                  label={lst:basic_cuda},
+                  caption={Basic CUDA programming model expressed in Julia},
+                  captionpos=b]
+function kernel_vadd(a, b, c)
+    i = (blockIdx().x-1) * blockDim().x +
+        threadIdx().x
+    c[i] = a[i] + b[i]
+end
+\end{lstlisting}
+
+However, Julia's type specialization enables a powerful set of additional abstractions on the GPU. For example, the code above is not restricted to dense arrays of floats, and could instead be given sparse arrays of complex numbers; Julia's normal specialization mechanisms would generate a new set of PTX instructions for that case. We can even abstract this code further into a ``higher-order kernel" that accepts the \texttt{+} function (or \texttt{*}, or arbitrary user-defined \texttt{f}) and thus create a whole family of functions \texttt{map(f, x, y)} in four lines of code \cite{innesGPU}.
+
+Since this works for user-defined types, we can additionally make use of dual numbers for forward-mode differentiation \cite{revels2016forward}. Compared to reverse mode techniques, dual numbers have the significant advantage of being stack-allocated and interleaving primal and tangent computation, and thus in memory bound situations (such as GPUs) the derivatives are effectively free. This is particularly valuable in functions that contain control flow.
+
+In the case of element-wise operations, such as \texttt{c = tanh.(a .+ b)} with vectors of length $N$, we can see this single $\mathbb{R}^{2N} \rightarrow \mathbb{R}^N$ computation as $N$ independent $\mathbb{R}^2 \rightarrow \mathbb{R}$ ones, for which forward mode is very efficient. In other words, by running the same computation with dual numbers we efficiently compute the (very sparse) Jacobians $\partial c / \partial a$ and $\partial c / \partial b$ fused with the original operation, which can then be used within the reverse-mode sweep to get gradients. In the base case this allows us to fully fuse elementwise operations like the above, but it also generalizes to complex user-defined functions including control flow, and can be much faster than the equivalent series of vector-level operations that would have to be used otherwise.
+
+\subsection{Algorithmic Differentiation}
+\label{zygote}
+
+Pushing the limits of reverse-mode differentiation \cite{speelpenning1980compiling}, we have also come to see this as a language-level problem. Differentiation is a symbolic transformation that works on programs or symbolic expressions, and this is the domain of compilers. Existing ML frameworks achieve this transformation by \textit{tracing} (or \textit{partial evaluation}); a new tensor type is introduced which records all the basic mathematical operations performed, yielding a graph with the control flow and data structures of the host language elided. This graph, equivalent to a Wengert list \cite{bartholomew2000automatic}, is more easily differentiated than the original program.
+
+Frameworks are thus divided into the ``dynamic'' and ``static'' approaches \cite{neubig2017dynet} depending on whether they interpret \cite{maclaurin2015autograd} or compile \cite{bergstra2011theano} the recorded graph. However, this presents to us a false dichotomy: we either accept the overhead of an interpreter or freeze user control flow and limit the kinds of models that can be built (perhaps providing limited additional primitives to place control flow into the graph).
+
+We reject these constraints and assert that the ``graph'' can instead  simply be the Julia syntax tree.  Extending previous work on differentiable languages \cite{pearlmutter2008reverse} we have built \texttt{Zygote}, a source-to-source auto-differentiator in Julia, which works directly on SSA-form IR and supports language features like control flow, recursion, data structures and macros, resolving the AD trade-off. By putting the generated SSA-form adjoint code through a traditional compiler such as LLVM \cite{lattner2004llvm}, we get all the benefits of traditional compiler optimization applied to both our forward and backwards passes. In addition, it opens up the possibility of extending that compiler infrastructure with more advanced and domain-specific optimizations, such as kernel fusion and compilation to accelerators such as TPUs.
+
+\subsection{Compiling Julia for TPUs}
+\label{tpu}
+
+Google recently introduced a new API that allows users of their Cloud TPU offering to directly generate IR for the \textit{XLA} (``Accelerated Linear Algebra'') compiler. This IR is essentially a general purpose IR and optimizing compiler for expressing arbitrary computations of linear algebra primitives and thus provides a good foundation for targeting TPUs by non-Tensorflow users as well as for non-machine learning workloads.
+We take advantage of Julia's dynamic type system and extendable compiler to build the capability to compile arbitrary Julia code to XLA, and then to run it on TPUs.
+This allows users to take advantage of the full expressiveness of the Julia programming language in writing their models, including multiple dispatch, higher order functions and existing libraries such as those for differential equation solvers and generic linear algebra routines, while reaping the benefits of the high-performance systolic array engine within the TPU.
+
+The basic workflow of the Julia compiler is to analyze chunks of a Julia program, identify static sub-segments, compile those sub-segments, and run them, returning to a dynamic environment only when necessary to compute, at runtime, the next static sub-segment to be compiled/run.
+By hooking into this compilation infrastructure, we are able to define custom compiler passes that identify static sub-segments of Julia code and compile them directly to blocks of static XLA IR, which can be run directly on TPUs through the newly exposed API offered by Google.
+
+While many dynamic languages are capable of limited amounts of static analysis, it is worth pointing out that the ``static sub-segments'' being referred to here are often quite large due to the Julia compiler's aggressive type specialization, type inference and constant propagation.
+As an illustrative example, we are able to compile the VGG19 \cite{vgg19} machine learning model's forward pass, backward pass and optimization step (that is to say, the entire training loop) into a single chunk of XLA code that can be run on the TPU without breaking out into Julia at all.
+This technical capability is critical in a heterogeneous computing system such as the TPU, as communication latency between the Julia host process and the TPU accelerator is significant, and must be avoided whenever possible.
+
+\subsection{Automatic Batching}
+\label{spmd}
+
+The naturally data-parallel structure of many ML models makes them an excellent fit for massively parallel processors such as GPUs \cite{oh2004gpu} and TPUs. To get the most from these accelerators---which can have significant constant overheads per kernel launch, but scale very well over input size---it is common to \textit{batch} them, applying the forwards and backwards passes to multiple training examples at once. In simple models this can be achieved by stacking a set of images or samples along an additional batch dimension, and primitives such as matrix multiply, convolution and broadcasting naturally handle this extra dimension as if all samples were independent.
+
+However, this approach assumes that any control flow in the model follows the same path for each sample in the batch. This is not valid when dealing with more dynamic inputs, such as trees \cite{treelstm} or graphs \cite{graphconv}, or any kind of value-dependent control flow. To see the issue, consider the following scalar function, which we may wish to apply to a batch of scalars at once.
+
+\begin{lstlisting}[language = Julia,
+                  label={lst:not_spmd},
+                  caption={\texttt{tozero()} is a simple scalar function},
+                  captionpos=b]
+function tozero(x)
+    if x < 0
+        x += 1
+    else
+        x -= 1
+    end
+    return x
+end
+\end{lstlisting}
+
+To batch this is much more complex than feeding in a vector $x$, since the condition $x < 0$ is no longer meaningful. Instead we must significantly rework the code to construct an element-wise \textit{mask} \texttt{x .< 0}, evaluate both branches, and merge the results of each branch together.
+
+\begin{lstlisting}[language = Julia,
+                  label={lst:spmd},
+                  caption={\texttt{spmd()} is a version of \texttt{notspmd()} that works on batches of inputs},
+                  captionpos=b]
+function tozero(x)
+    if x < 0
+        x += 1
+    else
+        x -= 1
+    end
+    return x
+end
+\end{lstlisting}
+
+Most researchers address this by taking on the significant burden of batching code by hand. Different solutions have been proposed for different frameworks \cite{neubig2017fly} \cite{looks2017deep}, which heuristically try to batch some high level operations together when possible, using different policies to choose what to batch and when, but these have their own usability issues and typically do not achieve the performance of hand-written code.
+
+We propose that this problem is identical to that of Single Program Multiple Data (SPMD) programming, which has been well-studied by the language and compiler community for decades \cite{blelloch1990vector, Allen:1983:CCD:567067.567085}. Indeed, it is very similar to the model of parallelism used by GPUs internally, and has been implemented as a compiler transform for the SIMD units of CPUs \cite{Pharr2012ispcAS}. Taking inspiration from this work, we are implementing the same transform \cite{hack2011whole} in Julia to provide SPMD programming both for scalar SIMD units and for model-level batching.
+
+By doing so, we are able to take models written for individual samples and transform the IR so that low level operations such as matrix multiplies are run in parallel across the batch. Furthermore we modify the IR so that control flow is handled correctly. Finally, we extend the input types that the original function takes in order to have one extra dimensions, as is currently done when batching images.  The case of batching simple models is then a special case of a more general transformation.
+
+This work is ongoing, and will be packaged as a normal Julia library that will give users of \texttt{Flux} the ability to painlessly transform their model in such a way that they will be able to train them with mini-batches and fully utilize the power of their parallel hardware.
+
+\subsection{JavaScript Compilation}
+
+In an approach similar to that of the GPU and TPU compilation efforts, the \texttt{FluxJS} package \cite{FluxJS.jl} supports compiling Julia models to Javascript, using an approach based on partial evaluation of model code.  By defining a small number of fundamental operator equivalencies between Julia and Javascript, this package is able to parse the Julia syntax tree to create a function call graph, including control flow such as in RNNs, and makes use of the \texttt{tensorflow.js} \cite{tensorflow.js} package in order to accelerate specific machine learning operations.
+
+This encompasses one of the best ways to showcase a trained \texttt{Flux} model, as the web browser platform is one of the most widely available and compatible software platforms in existence.  The work of adding new fundamental operations to the Julia to Javascript transpiler is minimal, and thanks to the introspective nature of Julia's code representations, compositions of fundamental operations are themselves transpileable.  This hijacking of multiple dispatch within the Julia compiler is flexible, and powerful; as an example, \texttt{FluxJS} specializes the \texttt{*(x::AbstractArray, y::AbstractArray)} method to convert matrix-matrix and matrix-vector multiplication operations into the \texttt{tensorflow.js} equivalents, yielding high-performance dense and LSTM layers.
+
+\section{A Library Ecosystem for ML}
+
+The inherent design of \texttt{Flux}, built on top of the technical foundation of Julia's multiple dispatch semantics, unlocks the ability for \texttt{Flux} to act as an extremely flexible ``glue'' that can bring together disparate packages into a single, differentiable and high-performance program.
+
+\subsection{Metalhead}
+The composable approach to programming that \texttt{Flux} offers has yielded great results in the ability for the community to merge disparate packages together into new and exciting combinations.  \textit{Metalhead}, a package for standard computer vision models built on top of \texttt{Flux}, provides example models such as VGG19 \cite{vgg19}, or ResNet \cite{resnet}.  In order to load images from the various computer vision datasets, Metalhead does not define its own image loading code but instead simply uses the \texttt{Images} package which yields sufficient information about the loaded images' data layout through the type system so as to enable efficient data loading and transformations.  Metalhead provides the basic models and building blocks necessary for modern computer vision research in one convenient location.
+
+\subsection{Package management}
+Integrating composable pieces of code at the unit of ``packages'' brings about another useful benefit; the Julia packaging system (referred to as \texttt{Pkg}) allows for a researcher to install a set of packages, complete their experiments, then record a manifest file which contains the exact versions and hashes of every package used within the entire project, including the code internal to Julia itself.  This allows a second researcher to, months later, load that manifest file and obtain the exact versions of the software used to run the experiments the first time around.  The balance of generating reproducible science while maintaining a rapid pace of innovation is a difficult one to achieve, however with the proper tools we believe it is within our grasp.
+
+\section{Conclusion}
+
+In conclusion, we have presented the reasons why \texttt{Flux} in particular and Julia in general provide an excellent environment for high performance, simple and hackable machine learning.  We gave examples of complex models and functions defined in clearly readable, mathematically recognizable forms and detailed many of the techniques used to ensure that the generated code is not only performant on traditional CPUs, but also the accelerators that are increasingly critical to applied machine learning today.
+
+\input{bib.tex}
+
+\end{document}
+
+% Inspired by the International Journal of Computer Applications template

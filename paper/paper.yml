@@ -1,0 +1,40 @@
+title: "Fashionable Modelling With Flux"
+keywords:
+  - Julia
+  - Optimization
+  - Machine Learning
+  - Compiler
+  - Differentiable Programming
+authors:
+  - name: Mike Innes
+    orcid: 0000-0003-0788-0242
+    affiliation: 1
+  - name: Elliot Saba
+    affiliation: 1
+  - name: Keno Fischer
+    affiliation: 1
+  - name: Dhairya Gandhi
+    affiliation: 1
+  - name: Marco Concetto Rudilosso
+    affiliation: 2
+  - name: Neethu Mariya Joy
+    affiliation: 3
+  - name: Tejan Karmali
+    affiliation: 4
+  - name: Avik Pal
+    affiliation: 5
+  - name: Viral B. Shah
+    affiliation: 1
+affiliations:
+  - name: Julia Computing, Inc.
+    index: 1
+  - name: University College London
+    index: 2
+  - name: Birla Institute of Technology and Science Pilani, India
+    index: 3
+  - name: Indian Institute of Science, Bangalore, India
+    index: 4
+  - name: Indian Institute of Technology Kanpur, India
+    index: 5
+date: 27 April 2019
+bibliography: ref.bib
