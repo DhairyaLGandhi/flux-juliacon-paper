@@ -132,11 +132,11 @@ In order to solve this, a Discriminative Adversarial Network (DAN) was employed,
                   caption={DAN training loop},
                   captionpos=b]
 for x, y_c, y_d in training_set
-    y_c_hat, y_d_hat = model(x)
+    y_c_hat, y_dan_hat = model(x)
 
     c_loss = loss(y_c_hat, y) +
-             lambda*loss(y_d_hat, 1 - y_d)
-    d_loss = loss(y_d_hat, y_d)
+             lambda*loss(y_dan_hat, 1 - y_d)
+    d_loss = loss(y_dan_hat, y_d)
     
     back!(c_loss)
     back!(d_loss)
@@ -145,7 +145,7 @@ for x, y_c, y_d in training_set
 end
 \end{lstlisting}
 
-The code necessary to perform this nonstandard optimization task is surprisingly simple; shown in listing \ref{lst:dirty_dan_training_loop}, it simple calculates a forward pass through the model, returning the outputs from the two branches of the model as \texttt{y\_hat} and \texttt{y\_dan\_hat}, calculates the classifier loss (\texttt{c\_loss}) and the DAN loss (\texttt{d\_loss}), backpropagates the losses onto the network, then takes an optimizer step (\texttt{opt()}).  As can be seen, the optimization framework of \texttt{Flux} follows very naturally from the basic mathematical principles of optimization and provides for very flexible training and evaluation paradigms.
+The code necessary to perform this nonstandard optimization task is surprisingly simple; shown in listing \ref{lst:dirty_dan_training_loop}, it simple calculates a forward pass through the model, returning the outputs from the two branches of the model as \texttt{y\_c\_hat} and \texttt{y\_dan\_hat}, calculates the classifier loss (\texttt{c\_loss}) and the DAN loss (\texttt{d\_loss}), backpropagates the losses onto the network, then takes an optimizer step (\texttt{opt()}).  As can be seen, the optimization framework of \texttt{Flux} follows very naturally from the basic mathematical principles of optimization and provides for very flexible training and evaluation paradigms.
 
 \begin{figure*}[ht]
   \centering
@@ -273,11 +273,10 @@ To batch this is much more complex than feeding in a vector $x$, since the condi
                   caption={\texttt{spmd()} is a version of \texttt{notspmd()} that works on batches of inputs},
                   captionpos=b]
 function tozero(x)
-    if x < 0
-        x += 1
-    else
-        x -= 1
-    end
+    cond = x .< 0
+    x1 = x .+ 1
+    x2 = x .- 1
+    x = select(cond, x1, x2)
     return x
 end
 \end{lstlisting}
