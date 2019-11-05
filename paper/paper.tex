@@ -104,7 +104,6 @@ struct ResidualBlock
     norm::Tuple
     shortcut
 end
-@treelike ResidualBlock
 
 function (B::ResidualBlock)(input)
     x = B.norm[1](B.conv[1](input))
